@@ -53,6 +53,7 @@ ANSWER=""
 CHOICE=""
 NORMALIZED=""
 VALIDATION_ERROR=""
+VALIDATION_SOFT=0
 SERVER_IP="${SERVER_IP:-}"
 HTTP_CODE=""
 HTTP_BODY=""
@@ -200,7 +201,7 @@ read_secret() {
 # Без вопросов (NONINTERACTIVE=1) берётся значение по умолчанию — переменная окружения или
 # текущая настройка. Проверка может заменить ответ на нормализованный ($NORMALIZED).
 ask() {
-  local var="$1" prompt="$2" validator="$3" def="${4-}" secret="${5-}" value
+  local var="$1" prompt="$2" validator="$3" def="${4-}" secret="${5-}" value soft_failures=0
   while :; do
     if ! interactive; then
       value="$def"
@@ -212,6 +213,7 @@ ask() {
       value="$ANSWER"
     fi
     VALIDATION_ERROR=""
+    VALIDATION_SOFT=0
     NORMALIZED="$value"
     if "$validator" "$value"; then
       printf -v "$var" '%s' "$NORMALIZED"
@@ -219,6 +221,15 @@ ask() {
     fi
     interactive || die "$var: ${VALIDATION_ERROR:-неверное значение}"
     warn "${VALIDATION_ERROR:-Неверное значение, попробуйте ещё раз.}"
+    # Страховка от тупика: если проверку через внешний API не удаётся пройти, а человек уверен в значении.
+    if [ "$VALIDATION_SOFT" = 1 ]; then
+      soft_failures=$((soft_failures + 1))
+      if [ "$soft_failures" -ge 3 ] && confirm "Проверка через Meta так и не прошла. Если вы уверены, что значение верное, сохранить его без проверки?" n; then
+        printf -v "$var" '%s' "$NORMALIZED"
+        warn "Сохранено без проверки. Если бот не будет отвечать в WhatsApp, смотрите журнал: dental-bot logs"
+        return 0
+      fi
+    fi
   done
 }
 
@@ -505,6 +516,7 @@ check_whatsapp() {
     *)
       code="$(json_get '.error.code' "$HTTP_BODY")"
       message="$(json_get '.error.message' "$HTTP_BODY")"
+      VALIDATION_SOFT=1
       case "$code" in
         190) VALIDATION_ERROR="Токен недействителен или истёк ($message). Нужен постоянный токен системного пользователя." ;;
         100 | 803) VALIDATION_ERROR="Phone number ID не найден или у токена нет к нему доступа ($message)." ;;
@@ -558,6 +570,7 @@ check_app_secret() {
       ;;
   esac
   VALIDATION_ERROR="App Secret не подходит к приложению, для которого выпущен токен (ID $WA_APP_ID). Откройте настройки именно этого приложения."
+  VALIDATION_SOFT=1
   return 1
 }
 

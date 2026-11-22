@@ -467,6 +467,42 @@ describe.skipIf(!TOOLS_OK)("мастер установки", () => {
   }, 60_000);
 });
 
+describe.skipIf(!TOOLS_OK)("мастер установки: страховка от тупика", () => {
+  it("если проверка в Meta трижды не прошла, предлагает сохранить значение без проверки", async () => {
+    const sb = makeSandbox();
+    const tty = answers(sb, [
+      "bot.example.kz",
+      GOOD.claude,
+      "Улыбка",
+      "",
+      "г. Алматы, ул. Абая, 1",
+      "+7 701 234 56 78",
+      "Пн–Пт 9:00–20:00",
+      "ТОО «Улыбка»",
+      "",
+      "1",
+      "123456789012345",
+      GOOD.wa,
+      "a".repeat(32), // Meta не принимает — трижды
+      "b".repeat(32),
+      "c".repeat(32),
+      "д", // сохранить без проверки
+      "н", // Telegram — не сейчас
+      "д",
+    ]);
+    const result = await run(sb, ["install"], {
+      INSTALL_TTY: tty,
+      ANTHROPIC_API_URL: mock.url,
+      GRAPH_API_URL: mock.url,
+      TELEGRAM_API_URL: mock.url,
+    });
+    expect(result.code, result.output).toBe(0);
+    expect(result.output.match(/App Secret не подходит/g)).toHaveLength(3);
+    expect(result.output).toContain("Сохранено без проверки");
+    expect(readEnv(path.join(sb.app, ".env")).WHATSAPP_APP_SECRET).toBe("c".repeat(32));
+  }, 60_000);
+});
+
 describe.skipIf(!TOOLS_OK)("команда dental-bot", () => {
   it("edit: ошибка в файле — возврат к прежней версии; правильная правка применяется без перезапуска", async () => {
     const sb = await installed();

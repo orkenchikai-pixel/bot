@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -38,7 +38,7 @@ jobs:
         INSTALL_DIR=${{ github.workspace }} SKIP_GIT_UPDATE=1 NONINTERACTIVE=1
         SKIP_KEY_CHECKS=1 SKIP_DNS_CHECK=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: ShellCheck
         run: shellcheck install.sh scripts/dental-bot.sh
       - name: Установка мастером без вопросов

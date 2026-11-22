@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Установка ИИ-администратора стоматологии (WhatsApp + Claude) на сервер.
 #
-# Вставьте в консоль сервера (Ubuntu 22.04/24.04 или Debian 12, пользователь root) одну строку:
+# Вставьте в консоль сервера (Ubuntu 22.04/24.04 или Debian 12, пользователь root) одну строку.
+# Репозиторий закрытый — команда спросит токен GitHub с правом чтения (как создать — START.md, шаг 4):
+#
+#   read -rsp "Токен GitHub: " GITHUB_TOKEN && echo && export GITHUB_TOKEN && bash <(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" https://api.github.com/repos/orkenchikai-pixel/bot/contents/install.sh)
+#
+# Если репозиторий публичный, токен не нужен:
 #
 #   bash <(curl -fsSL https://raw.githubusercontent.com/orkenchikai-pixel/bot/main/install.sh)
 #
@@ -9,8 +14,8 @@
 # он спросит домен, ключ Claude и данные WhatsApp, сам сгенерирует секреты и запустит бота.
 # Повторный запуск безопасен: код обновится, настройки и ключ шифрования сохранятся.
 #
-# Для опытных: INSTALL_DIR, REPO_URL, BRANCH, GITHUB_TOKEN (закрытый репозиторий),
-# NONINTERACTIVE=1 — установка без вопросов, ответы из переменных окружения (dental-bot help).
+# Для опытных: INSTALL_DIR, REPO_URL, BRANCH, GITHUB_TOKEN, NONINTERACTIVE=1 — установка
+# без вопросов, ответы из переменных окружения (dental-bot help).
 set -Eeuo pipefail
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -28,43 +33,53 @@ fail() {
 
 tty_available() { (: </dev/tty) 2>/dev/null; }
 
+basic_auth() { printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n'; }
+
 # git с токеном GitHub для закрытого репозитория. Токен передаётся через переменные окружения
 # git (GIT_CONFIG_*), а не аргументы командной строки, — так его не видно в списке процессов.
-git_auth() {
+git_with_token() {
+  GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="http.https://github.com/.extraHeader" \
+    GIT_CONFIG_VALUE_0="Authorization: Basic $(basic_auth)" git "$@"
+}
+
+# Токен сохраняется для обновлений (dental-bot update) в отдельном файле, который читает только root.
+# Повторный запуск с новым токеном (например, когда старый истёк) заменяет его.
+save_token() {
+  local dir="$1"
+  (umask 077 && printf '[http "https://github.com/"]\n\textraHeader = Authorization: Basic %s\n' "$(basic_auth)" >"$dir/.git/dental-bot-auth")
+  if ! git -C "$dir" config --get-all include.path 2>/dev/null | grep -qx dental-bot-auth; then
+    git -C "$dir" config --add include.path dental-bot-auth
+  fi
+}
+
+clone_once() {
+  local repo="$1" branch="$2" dir="$3"
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    local basic
-    basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-    GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 \
-      GIT_CONFIG_KEY_0="http.https://github.com/.extraHeader" \
-      GIT_CONFIG_VALUE_0="Authorization: Basic $basic" git "$@"
+    git_with_token clone --quiet --depth 1 --branch "$branch" "$repo" "$dir" 2>/dev/null
   else
-    GIT_TERMINAL_PROMPT=0 git "$@"
+    GIT_TERMINAL_PROMPT=0 git clone --quiet --depth 1 --branch "$branch" "$repo" "$dir" 2>/dev/null
   fi
 }
 
 clone_repo() {
   local repo="$1" branch="$2" dir="$3"
-  if git_auth clone --quiet --depth 1 --branch "$branch" "$repo" "$dir" 2>/dev/null; then
-    return 0
+  if ! clone_once "$repo" "$branch" "$dir"; then
+    rm -rf "$dir"
+    if [ -z "${GITHUB_TOKEN:-}" ] && [ "${NONINTERACTIVE:-0}" != 1 ] && tty_available; then
+      say "Не удалось скачать код из $repo."
+      say "Если репозиторий закрытый, нужен токен GitHub с правом чтения: github.com → Settings →"
+      say "Developer settings → Fine-grained tokens → доступ к репозиторию, Contents: Read-only."
+      printf '%s ' "Вставьте токен (символы не отображаются) или нажмите Enter для выхода:"
+      IFS= read -rs GITHUB_TOKEN </dev/tty || true
+      printf '\n'
+      GITHUB_TOKEN="${GITHUB_TOKEN//[[:space:]]/}"
+    fi
+    [ -n "${GITHUB_TOKEN:-}" ] || fail "Не удалось скачать код. Проверьте интернет на сервере и адрес репозитория ($repo)."
+    clone_once "$repo" "$branch" "$dir" ||
+      fail "GitHub не принял токен или не нашёл репозиторий $repo (ветка $branch). Проверьте, что у токена есть доступ к репозиторию и он не истёк."
   fi
-  rm -rf "$dir"
-  if [ -z "${GITHUB_TOKEN:-}" ] && [ "${NONINTERACTIVE:-0}" != 1 ] && tty_available; then
-    say "Не удалось скачать код из $repo."
-    say "Если репозиторий закрытый, нужен токен GitHub с правом чтения: github.com → Settings →"
-    say "Developer settings → Fine-grained tokens → доступ к репозиторию, Contents: Read-only."
-    printf '%s ' "Вставьте токен (символы не отображаются) или нажмите Enter для выхода:"
-    IFS= read -rs GITHUB_TOKEN </dev/tty || true
-    printf '\n'
-    GITHUB_TOKEN="${GITHUB_TOKEN//[[:space:]]/}"
-  fi
-  [ -n "${GITHUB_TOKEN:-}" ] || fail "Не удалось скачать код. Проверьте интернет на сервере и адрес репозитория ($repo)."
-  git_auth clone --quiet --depth 1 --branch "$branch" "$repo" "$dir" ||
-    fail "GitHub не принял токен или не нашёл репозиторий $repo (ветка $branch)."
-  # Чтобы обновления (dental-bot update) работали без повторного ввода токена. Файл читает только root.
-  local basic
-  basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-  printf '[http "https://github.com/"]\n\textraHeader = Authorization: Basic %s\n' "$basic" >>"$dir/.git/config"
-  chmod 600 "$dir/.git/config"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then save_token "$dir"; fi
 }
 
 # Весь сценарий — в одной функции, которая вызывается в последней строке: если скачивание
@@ -95,8 +110,9 @@ main() {
       ok "Код уже на месте: $dir"
     else
       say "Обновляю код в $dir…"
-      git_auth -C "$dir" pull --ff-only --quiet ||
-        fail "Не удалось обновить код. Если вы меняли файлы в $dir вручную, посмотрите: git -C $dir status"
+      if [ -n "${GITHUB_TOKEN:-}" ]; then save_token "$dir"; fi
+      GIT_TERMINAL_PROMPT=0 git -C "$dir" pull --ff-only --quiet ||
+        fail "Не удалось обновить код. Если истёк токен GitHub — создайте новый и запустите команду установки с ним. Если вы меняли файлы в $dir вручную, посмотрите: git -C $dir status"
       ok "Код обновлён"
     fi
   elif [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
@@ -107,6 +123,8 @@ main() {
     ok "Код скачан"
   fi
 
+  # Токен уже сохранён для обновлений — дальше (Docker, сборка) он не нужен.
+  unset GITHUB_TOKEN
   # Вопросы мастера читаются с терминала, даже если этот скрипт пришёл через «curl … | bash».
   if [ ! -t 0 ] && tty_available; then
     exec bash "$dir/scripts/dental-bot.sh" install "$@" </dev/tty

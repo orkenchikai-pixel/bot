@@ -52,11 +52,28 @@ ssh root@185.22.33.44
 
 ## Шаг 4. Запустите мастер установки
 
+### 4.1. Создайте токен GitHub
+
+Код бота лежит в закрытом репозитории, поэтому серверу нужен «пропуск» — токен с правом только на чтение:
+
+1. Войдите на [github.com](https://github.com) в аккаунт, где лежит репозиторий, нажмите на фото профиля справа вверху → **Settings**.
+2. Слева внизу: **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**.
+3. **Token name** — например, `dental-bot`. **Expiration** — максимальный срок.
+4. **Repository access** → **Only select repositories** → выберите `orkenchikai-pixel/bot`.
+5. **Permissions** → **Repository permissions** → **Contents** → **Read-only**.
+6. Нажмите **Generate token** и скопируйте токен (начинается с `github_pat_`). GitHub покажет его только один раз.
+
+Один токен подойдёт для всех ваших серверов. Если токен попал в чужие руки, удалите его там же (Delete) и создайте новый.
+
+### 4.2. Вставьте команду установки
+
 Скопируйте команду целиком, вставьте в окно сервера и нажмите Enter:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/orkenchikai-pixel/bot/main/install.sh)
+read -rsp "Токен GitHub: " GITHUB_TOKEN && echo && export GITHUB_TOKEN && bash <(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" https://api.github.com/repos/orkenchikai-pixel/bot/contents/install.sh)
 ```
+
+Команда попросит токен: вставьте его и нажмите Enter (символы при вводе не отображаются). Установщик сохранит токен на сервере, чтобы потом скачивать обновления.
 
 Мастер задаст вопросы. Ответ вводите и подтверждайте клавишей Enter. В квадратных скобках — ответ по умолчанию: его можно принять, просто нажав Enter.
 
@@ -206,6 +223,8 @@ dental-bot telegram
 | Meta: «The callback URL or verify token couldn't be validated» | Откройте в браузере `https://bot.ваш-домен.kz/health` — должно быть `{"ok":true}`. Скопируйте Verify token заново из `dental-bot info` |
 | Бот не отвечает в WhatsApp | Выполните `dental-bot logs` и напишите боту — в журнале будет видно, что происходит. Проверьте подписку на поле `messages` (7.5), список получателей у тестового номера и что токен постоянный |
 | В журнале «credit balance is too low» | Пополните баланс в platform.claude.com → Billing |
+| Команда установки выдаёт ошибку 404 | Токен GitHub введён неверно, не имеет доступа к репозиторию или истёк. Создайте новый (шаг 4.1) |
+| `dental-bot update` пишет «Не удалось скачать обновление» | Скорее всего, истёк токен GitHub. Создайте новый (шаг 4.1) и выполните команду установки ещё раз — она обновит бота и сохранит новый токен |
 | Потерялась ссылка на тестовый чат | `dental-bot info` |
 | Нужно перенести бота на другой сервер | Установите бота мастером на новом сервере и остановите на обоих (`dental-bot stop`). Перенесите из `/opt/dental-bot` файл `.env` и папки `clinics.local` и `data`, затем на новом сервере выполните `dental-bot start` |
 

@@ -16,7 +16,6 @@ CLINICS_DIR="$APP_DIR/$CLINICS_REL"
 TEMPLATE="$APP_DIR/clinics/demo.json"
 IMAGE="dental-bot-agent"
 APP_UID=1000 # пользователь node в образе node:22-slim: от его имени работает бот в контейнере
-INSTALL_URL="https://raw.githubusercontent.com/orkenchikai-pixel/bot/main/install.sh"
 LOG_FILE="${LOG_FILE:-/var/log/dental-bot.log}"
 INSTALL_TTY="${INSTALL_TTY:-/dev/tty}"
 NONINTERACTIVE="${NONINTERACTIVE:-0}"
@@ -131,7 +130,7 @@ require_root() {
 }
 
 require_installed() {
-  [ -f "$ENV_FILE" ] || die "Бот ещё не установлен. Установка: bash <(curl -fsSL $INSTALL_URL)"
+  [ -f "$ENV_FILE" ] || die "Бот ещё не установлен. Установите его командой из START.md (шаг 4) — она скачивает и запускает install.sh."
   command -v docker >/dev/null 2>&1 || die "Не найден Docker. Запустите установку ещё раз."
 }
 

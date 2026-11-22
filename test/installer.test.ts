@@ -616,6 +616,37 @@ describe.skipIf(!TOOLS_OK)("install.sh", () => {
     expect(readFileSync(path.join(foreign, "notes.txt"), "utf8")).toBe("чужие файлы");
   }, 90_000);
 
+  it("закрытый репозиторий: токен сохраняется только для root, не выводится и заменяется новым", async () => {
+    const sb = makeSandbox();
+    const origin = path.join(sb.root, "origin");
+    copyApp(origin);
+    for (const args of [["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "init"]]) {
+      const res = spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "init.defaultBranch=main", ...args], { cwd: origin, encoding: "utf8" });
+      expect(res.status, res.stderr).toBe(0);
+    }
+    const dir = path.join(sb.root, "opt", "dental-bot");
+    const repoEnv = { REPO_URL: `file://${origin}`, INSTALL_DIR: dir, STUB_APP: dir };
+    const authFile = path.join(dir, ".git/dental-bot-auth");
+    const header = (token: string) => `extraHeader = Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+    const includes = () => spawnSync("git", ["-C", dir, "config", "--get-all", "include.path"], { encoding: "utf8" }).stdout.trim().split("\n");
+
+    const first = await run(sb, [], { ...BASE, ...repoEnv, GITHUB_TOKEN: "github_pat_first" }, path.join(origin, "install.sh"));
+    expect(first.code, first.output).toBe(0);
+    expect(statSync(authFile).mode & 0o777).toBe(0o600);
+    expect(readFileSync(authFile, "utf8")).toContain(header("github_pat_first"));
+    expect(includes()).toEqual(["dental-bot-auth"]);
+    expect(first.output).not.toContain("github_pat_first");
+
+    // Токен истёк — команду установки запускают с новым: он заменяет старый, а не добавляется к нему.
+    const second = await run(sb, [], { NONINTERACTIVE: "1", SKIP_KEY_CHECKS: "1", ...repoEnv, GITHUB_TOKEN: "github_pat_second" }, path.join(origin, "install.sh"));
+    expect(second.code, second.output).toBe(0);
+    expect(second.output).toContain("Код обновлён");
+    const saved = readFileSync(authFile, "utf8");
+    expect(saved).toContain(header("github_pat_second"));
+    expect(saved).not.toContain(header("github_pat_first"));
+    expect(includes()).toEqual(["dental-bot-auth"]);
+  }, 90_000);
+
   it.skipIf(!has("shellcheck"))("скрипты проходят shellcheck", () => {
     const res = spawnSync("shellcheck", ["install.sh", "scripts/dental-bot.sh"], { cwd: REPO, encoding: "utf8" });
     expect(res.stdout + res.stderr).toBe("");

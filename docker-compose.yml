@@ -1,0 +1,50 @@
+# Запуск на сервере: агент + Caddy (автоматический HTTPS-сертификат Let's Encrypt).
+#   1. Направьте DNS-запись домена (A) на IP сервера.
+#   2. В .env укажите DOMAIN=bot.ваш-домен.kz и остальные секреты.
+#   3. docker compose up -d --build
+# Агент наружу не открыт — к нему ходит только Caddy по внутренней сети.
+services:
+  agent:
+    build: .
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      TRUST_PROXY: "true"
+    volumes:
+      - ./data:/app/data
+      # Прайс и расписание можно править без пересборки: отредактируйте файл и вызовите POST /admin/clinics/reload
+      - ./clinics:/app/clinics:ro
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - agent
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Укажите DOMAIN в .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -86,7 +86,9 @@ jobs:
       - name: Обновление (пересборка со свежим базовым образом)
         run: |
           sudo git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          sudo env SKIP_GIT_UPDATE=1 dental-bot update
+          sudo env SKIP_GIT_UPDATE=1 dental-bot update 2>&1 | tee update.log
+          # Перед обновлением обязательно делается резервная копия (сразу после ручной — тоже).
+          grep -q "Резервная копия базы создана" update.log
           curl -fsSk --resolve localhost:443:127.0.0.1 https://localhost/health
       - name: Повторный запуск мастера сохраняет ключ шифрования
         run: |

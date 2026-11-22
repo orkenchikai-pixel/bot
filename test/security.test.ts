@@ -209,19 +209,28 @@ describe("исходный код", () => {
     const ranges: Array<[number, number]> = [[0xad, 0xad], [0x61c, 0x61c], [0x180e, 0x180e], [0x200b, 0x200f], [0x202a, 0x202e], [0x2060, 0x2064], [0x2066, 0x2069], [0xfeff, 0xfeff], [0xe0000, 0xe007f]];
     const bad = { test: (text: string) => [...text].some((ch) => ranges.some(([a, b]) => ch.codePointAt(0)! >= a && ch.codePointAt(0)! <= b)) };
     const offenders: string[] = [];
+    // Установщик выполняется от root прямо из интернета — управляющих символов (кроме табуляции) в нём быть не должно.
+    const controlChars = /[\u0000-\u0008\u000b-\u001f\u007f]/;
+    const check = (full: string) => {
+      const text = readFileSync(full, "utf8");
+      if (bad.test(text) || (/\.sh$/.test(full) && controlChars.test(text))) offenders.push(full);
+    };
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         const full = path.join(dir, name);
         if (statSync(full).isDirectory()) walk(full);
-        else if (/\.(ts|json|md)$/.test(name) && bad.test(readFileSync(full, "utf8"))) offenders.push(full);
+        else if (/\.(ts|json|md|sh|ya?ml)$/.test(name)) check(full);
       }
     };
-    for (const dir of ["src", "test", "clinics", "scripts"]) {
+    for (const dir of ["src", "test", "clinics", "scripts", ".github"]) {
       try {
         walk(dir);
       } catch {
         // папки может не быть
       }
+    }
+    for (const file of ["install.sh", "Dockerfile", "Caddyfile", "docker-compose.yml", ".env.example", "README.md", "START.md", "SECURITY.md", "COMPLIANCE.md"]) {
+      check(file);
     }
     expect(offenders).toEqual([]);
   });

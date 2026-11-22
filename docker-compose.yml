@@ -1,19 +1,24 @@
 # Запуск на сервере: агент + Caddy (автоматический HTTPS-сертификат Let's Encrypt).
+# Проще всего — мастером установки (install.sh): он сам заполнит .env, создаст файл клиники
+# в clinics.local/ и запустит всё. Вручную:
 #   1. Направьте DNS-запись домена (A) на IP сервера.
 #   2. В .env укажите DOMAIN=bot.ваш-домен.kz и остальные секреты.
-#   3. docker compose up -d --build
+#   3. mkdir -p data && sudo chown 1000:1000 data   (бот в контейнере работает не от root)
+#   4. docker compose up -d --build
 # Агент наружу не открыт — к нему ходит только Caddy по внутренней сети.
 services:
   agent:
     build: .
+    image: dental-bot-agent:local
     env_file: .env
     environment:
       NODE_ENV: production
       TRUST_PROXY: "true"
     volumes:
       - ./data:/app/data
-      # Прайс и расписание можно править без пересборки: отредактируйте файл и вызовите POST /admin/clinics/reload
-      - ./clinics:/app/clinics:ro
+      # Файлы клиник. Мастер установки кладёт их в clinics.local (CLINICS_HOST_DIR в .env), чтобы
+      # обновления кода их не трогали. Прайс и расписание правятся без пересборки: dental-bot edit
+      - ${CLINICS_HOST_DIR:-./clinics}:/app/clinics:ro
     restart: unless-stopped
     read_only: true
     tmpfs:

@@ -6,3 +6,5 @@ data/
 *.db-wal
 .env
 coverage/
+# Файлы клиник, созданные мастером установки на сервере
+clinics.local/

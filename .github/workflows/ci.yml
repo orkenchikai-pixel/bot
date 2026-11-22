@@ -21,18 +21,82 @@ jobs:
       - run: npm ci
       - name: Проверка типов
         run: npm run typecheck
-      - name: Тесты с покрытием
+      - name: Тесты с покрытием (включая прогон мастера установки)
         run: npm run test:coverage
       - name: Уязвимости в зависимостях
         run: npm audit --audit-level=high
       - name: Сборка
         run: npm run build
 
-  docker:
+  # Настоящая установка мастером на чистой машине: Docker, Caddy с HTTPS, бот в production-режиме.
+  installer:
     runs-on: ubuntu-latest
     needs: test
-    timeout-minutes: 15
+    timeout-minutes: 30
+    env:
+      INSTALL_ENV: >-
+        INSTALL_DIR=${{ github.workspace }} SKIP_GIT_UPDATE=1 NONINTERACTIVE=1
+        SKIP_KEY_CHECKS=1 SKIP_DNS_CHECK=1
     steps:
       - uses: actions/checkout@v4
-      - name: Сборка Docker-образа
-        run: docker build -t dental-crm-agent:ci .
+      - name: ShellCheck
+        run: shellcheck install.sh scripts/dental-bot.sh
+      - name: Установка мастером без вопросов
+        run: |
+          sudo env $INSTALL_ENV \
+            DOMAIN=localhost \
+            ANTHROPIC_API_KEY="sk-ant-ci-$(openssl rand -hex 20)" \
+            WHATSAPP_PHONE_NUMBER_ID=123456789012345 \
+            WHATSAPP_ACCESS_TOKEN="EAACI$(openssl rand -hex 30)" \
+            WHATSAPP_APP_SECRET="$(openssl rand -hex 16)" \
+            CLINIC_NAME="CI Дентал" CLINIC_ADDRESS="г. Алматы, ул. Тестовая, 1" CLINIC_PHONE="+7 700 000 00 00" \
+            CLINIC_HOURS="Пн–Пт 9:00–18:00" CLINIC_OPERATOR="ТОО «CI Дентал»" \
+            bash install.sh
+      - name: Проверки работающего бота
+        run: |
+          set -euo pipefail
+          env_value() { sudo awk -F= -v k="$1" '$1 == k { print substr($0, length(k) + 2) }' .env; }
+          url=https://localhost
+          get() { curl -sk --resolve localhost:443:127.0.0.1 -o /dev/null -w '%{http_code}' "$@"; }
+
+          curl -fsSk --resolve localhost:443:127.0.0.1 "$url/health"
+          # Так Meta подтверждает вебхук: GET с hub.challenge и verify token.
+          verify="$(env_value WHATSAPP_VERIFY_TOKEN)"
+          test "$(curl -fsSk --resolve localhost:443:127.0.0.1 "$url/webhook/whatsapp?hub.mode=subscribe&hub.verify_token=$verify&hub.challenge=4242")" = 4242
+          test "$(get "$url/webhook/whatsapp?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=1")" = 403
+          # Сообщения принимаются только с подписью App Secret.
+          body='{"object":"whatsapp_business_account","entry":[]}'
+          sig="$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$(env_value WHATSAPP_APP_SECRET)" | awk '{ print $NF }')"
+          test "$(get -X POST -H 'Content-Type: application/json' -H "X-Hub-Signature-256: sha256=$sig" --data "$body" "$url/webhook/whatsapp")" = 200
+          test "$(get -X POST -H 'Content-Type: application/json' --data "$body" "$url/webhook/whatsapp")" = 401
+          # Админ-API снаружи без токена закрыт, с токеном — работает.
+          test "$(get "$url/admin/clinics")" = 401
+          test "$(get -H "Authorization: Bearer $(env_value ADMIN_TOKEN)" "$url/admin/clinics")" = 200
+          # Бот в контейнере работает не от root, файловая система только для чтения.
+          test "$(sudo docker compose exec -T agent id -u)" = 1000
+          if sudo docker compose exec -T agent touch /app/should-fail 2>/dev/null; then
+            echo "Файловая система контейнера доступна для записи"
+            exit 1
+          fi
+          sudo dental-bot status
+          sudo dental-bot check
+          sudo dental-bot backup
+          sudo sh -c 'ls data/backups/backup-*.db'
+          sudo dental-bot info
+      - name: Обновление (пересборка со свежим базовым образом)
+        run: |
+          sudo git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          sudo env SKIP_GIT_UPDATE=1 dental-bot update
+          curl -fsSk --resolve localhost:443:127.0.0.1 https://localhost/health
+      - name: Повторный запуск мастера сохраняет ключ шифрования
+        run: |
+          before="$(sudo grep '^DATA_ENCRYPTION_KEY=' .env)"
+          sudo env $INSTALL_ENV bash install.sh
+          test "$before" = "$(sudo grep '^DATA_ENCRYPTION_KEY=' .env)"
+          curl -fsSk --resolve localhost:443:127.0.0.1 https://localhost/health
+      - name: Журналы при ошибке
+        if: failure()
+        run: |
+          sudo docker compose ps || true
+          sudo docker compose logs --tail=200 || true
+          sudo tail -n 200 /var/log/dental-bot.log || true

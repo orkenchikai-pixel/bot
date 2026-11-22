@@ -13,6 +13,8 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node clinics ./clinics
+# Демо-пример отдельно: по нему проверка находит в файлах клиник забытые демо-врачи и цены.
+COPY --chown=node:node clinics/demo.json ./templates/clinic-demo.json
 RUN mkdir -p /app/data && chown node:node /app/data
 # Без root: даже при взломе процесса злоумышленник не получит права на систему.
 USER node

@@ -28,7 +28,8 @@ export interface SimulatorDeps {
   registry: ClinicRegistry;
   agent: DentalAgent;
   dbPath: string;
-  adminToken?: string;
+  /** Ключ для входа в симулятор (SIMULATOR_KEY, иначе ADMIN_TOKEN). Без ключа симулятор открыт всем. */
+  accessKey?: string;
   settings: DispatcherSettings;
   cipher?: FieldCipher;
 }
@@ -62,10 +63,10 @@ export function createSimulatorRoutes(deps: SimulatorDeps): Hono {
   const app = new Hono();
   // Ключ передаётся заголовком (страница берёт его из #key=… в адресе — фрагмент не уходит на сервер и в логи).
   app.use("/api/*", async (c, next) => {
-    if (deps.adminToken) {
+    if (deps.accessKey) {
       const key = Buffer.from(c.req.header("x-simulator-key") ?? "");
-      const expected = Buffer.from(deps.adminToken);
-      if (key.length !== expected.length || !timingSafeEqual(key, expected)) return c.json({ error: "Откройте симулятор по ссылке вида /simulator#key=ADMIN_TOKEN" }, 401);
+      const expected = Buffer.from(deps.accessKey);
+      if (key.length !== expected.length || !timingSafeEqual(key, expected)) return c.json({ error: "Откройте симулятор по ссылке вида /simulator#key=КЛЮЧ (dental-bot info)" }, 401);
     }
     await next();
   });

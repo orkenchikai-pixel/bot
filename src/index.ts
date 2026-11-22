@@ -1,8 +1,9 @@
 import "./scheduling/time.js";
 import { serve } from "@hono/node-server";
 import { createAgent, DEFAULT_CANARY_SECRET } from "./agent/factory.js";
+import { demoDataWarnings, loadDemoTemplate } from "./clinic/demo.js";
 import { ClinicRegistry } from "./clinic/registry.js";
-import { loadConfig, productionProblems } from "./config.js";
+import { isWhatsAppConnected, loadConfig, productionProblems } from "./config.js";
 import { openDatabase } from "./db/database.js";
 import { Repo } from "./db/repo.js";
 import { errorMessage, log } from "./log.js";
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
     throw new Error(`Конфигурация не готова к production:\n- ${problems.errors.join("\n- ")}`);
   }
   for (const warning of production ? problems.warnings : [...problems.errors, ...problems.warnings]) log.warn(warning);
+  for (const warning of demoDataWarnings(registry.list(), loadDemoTemplate())) log.warn(warning);
 
   const cipher = new FieldCipher(config.DATA_ENCRYPTION_KEY);
   const db = openDatabase(config.DATABASE_PATH);
@@ -67,8 +69,9 @@ async function main(): Promise<void> {
   const reminderDeps = { repo, registry, transport, notifier };
 
   // Открытый симулятор на публичном сервере — это бесплатный доступ к вашему ключу Claude для всех.
-  const simulatorEnabled = config.SIMULATOR_ENABLED && (Boolean(config.ADMIN_TOKEN) || !production);
-  if (config.SIMULATOR_ENABLED && !simulatorEnabled) log.warn("Симулятор выключен: в production он работает только с ADMIN_TOKEN");
+  const simulatorKey = config.SIMULATOR_KEY ?? config.ADMIN_TOKEN;
+  const simulatorEnabled = config.SIMULATOR_ENABLED && (Boolean(simulatorKey) || !production);
+  if (config.SIMULATOR_ENABLED && !simulatorEnabled) log.warn("Симулятор выключен: в production он работает только с SIMULATOR_KEY");
 
   const app = createApp({
     registry,
@@ -91,7 +94,7 @@ async function main(): Promise<void> {
           agent,
           cipher,
           dbPath: config.DATABASE_PATH.replace(/(\.db)?$/, "-simulator.db"),
-          adminToken: config.ADMIN_TOKEN,
+          accessKey: simulatorKey,
           settings,
         })
       : undefined,
@@ -100,9 +103,11 @@ async function main(): Promise<void> {
   const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
     log.info(`Сервер запущен: http://localhost:${info.port}`);
     log.info(`Клиники: ${registry.list().map((c) => `${c.name} (${c.id})`).join(", ")}`);
+    const connected = registry.list().filter((c) => isWhatsAppConnected(c)).length;
+    log.info(`WhatsApp подключён у клиник: ${connected} из ${registry.list().length}`);
     log.info(`Модель: ${config.AGENT_MODEL}, effort: ${config.AGENT_EFFORT}; шифрование базы: ${cipher.enabled ? "включено" : "ВЫКЛЮЧЕНО"}`);
     if (simulatorEnabled) {
-      log.info(`Веб-симулятор: http://localhost:${info.port}/simulator${config.ADMIN_TOKEN ? "#key=<ADMIN_TOKEN>" : ""}`);
+      log.info(`Веб-симулятор: http://localhost:${info.port}/simulator${simulatorKey ? "#key=<SIMULATOR_KEY>" : ""}`);
     }
   });
 

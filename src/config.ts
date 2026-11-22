@@ -35,6 +35,11 @@ const EnvSchema = z.object({
   // Админ-API и веб-симулятор
   ADMIN_TOKEN: z.string().optional(),
   SIMULATOR_ENABLED: flag(false),
+  /**
+   * Ключ веб-симулятора (ссылка /simulator#key=…). Отдельный от ADMIN_TOKEN, чтобы ссылку на тестовый
+   * чат можно было дать сотрудникам клиники, не раскрывая доступ к данным пациентов.
+   */
+  SIMULATOR_KEY: z.string().min(16, "SIMULATOR_KEY: минимум 16 символов").optional(),
 
   // Поведение диалога
   DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2500),
@@ -99,6 +104,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return parsed.data;
 }
 
+/** Номер WhatsApp клиники указан (а не оставлен плейсхолдер из примера — REPLACE…). */
+export function isWhatsAppConnected(clinic: { whatsapp: { phone_number_id: string } }): boolean {
+  return !clinic.whatsapp.phone_number_id.startsWith("REPLACE");
+}
+
 /**
  * Проверки перед запуском в production (NODE_ENV=production): лучше не стартовать вовсе,
  * чем работать с открытым вебхуком, слабым паролем админки или незашифрованной базой.
@@ -110,19 +120,33 @@ export function productionProblems(
 ): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
+  // Клиника без номера WhatsApp (плейсхолдер REPLACE…) работает только в веб-симуляторе: так можно
+  // установить бота и проверить его до того, как Meta выдаст номер и токен.
+  const connected = clinics.filter((clinic) => isWhatsAppConnected(clinic));
   if (!env.ANTHROPIC_API_KEY) errors.push("ANTHROPIC_API_KEY не задан");
-  if (!config.WHATSAPP_APP_SECRET) errors.push("WHATSAPP_APP_SECRET не задан — нельзя проверить подпись вебхука");
-  if (!config.WHATSAPP_VERIFY_TOKEN || config.WHATSAPP_VERIFY_TOKEN.length < 16) errors.push("WHATSAPP_VERIFY_TOKEN: нужна случайная строка от 16 символов");
+  if (connected.length > 0) {
+    if (!config.WHATSAPP_APP_SECRET) errors.push("WHATSAPP_APP_SECRET не задан — нельзя проверить подпись вебхука");
+    if (!config.WHATSAPP_VERIFY_TOKEN || config.WHATSAPP_VERIFY_TOKEN.length < 16) errors.push("WHATSAPP_VERIFY_TOKEN: нужна случайная строка от 16 символов");
+  } else if (clinics.length > 0) {
+    warnings.push("WhatsApp не подключён ни у одной клиники — бот отвечает только в веб-симуляторе");
+  }
   if (config.ADMIN_TOKEN && config.ADMIN_TOKEN.length < 32) errors.push("ADMIN_TOKEN: нужна случайная строка от 32 символов (npm run token)");
   if (!config.DATA_ENCRYPTION_KEY) errors.push("DATA_ENCRYPTION_KEY не задан — медицинские данные нельзя хранить незашифрованными (openssl rand -base64 32)");
   if (!config.CANARY_SECRET) warnings.push("CANARY_SECRET не задан — используется значение по умолчанию");
   if (config.LOG_MESSAGE_TEXT) warnings.push("LOG_MESSAGE_TEXT=true — тексты пациентов пишутся в логи, выключите после отладки");
-  if (config.SIMULATOR_ENABLED && !config.ADMIN_TOKEN) warnings.push("SIMULATOR_ENABLED без ADMIN_TOKEN — симулятор не будет включён");
+  if (config.SIMULATOR_ENABLED && !config.SIMULATOR_KEY && !config.ADMIN_TOKEN) {
+    warnings.push("SIMULATOR_ENABLED без SIMULATOR_KEY — симулятор не будет включён");
+  } else if (config.SIMULATOR_ENABLED && !config.SIMULATOR_KEY) {
+    warnings.push("Симулятор открывается токеном суперадмина — задайте отдельный SIMULATOR_KEY, чтобы не раздавать доступ к админке");
+  }
   for (const clinic of clinics) {
-    if (clinic.whatsapp.phone_number_id.startsWith("REPLACE")) errors.push(`Клиника ${clinic.id}: не указан whatsapp.phone_number_id`);
-    const tokenVar = clinic.whatsapp.access_token_env;
-    if (tokenVar ? !env[tokenVar] : !config.WHATSAPP_ACCESS_TOKEN) {
-      errors.push(`Клиника ${clinic.id}: не задан токен WhatsApp (${tokenVar ?? "WHATSAPP_ACCESS_TOKEN"})`);
+    if (!isWhatsAppConnected(clinic)) {
+      warnings.push(`Клиника ${clinic.id}: WhatsApp не подключён (whatsapp.phone_number_id) — она доступна только в симуляторе`);
+    } else {
+      const tokenVar = clinic.whatsapp.access_token_env;
+      if (tokenVar ? !env[tokenVar] : !config.WHATSAPP_ACCESS_TOKEN) {
+        errors.push(`Клиника ${clinic.id}: не задан токен WhatsApp (${tokenVar ?? "WHATSAPP_ACCESS_TOKEN"})`);
+      }
     }
     if (clinic.privacy.consent_mode !== "off" && !clinic.privacy.policy_url) {
       warnings.push(`Клиника ${clinic.id}: не указана ссылка на политику обработки данных (privacy.policy_url)`);

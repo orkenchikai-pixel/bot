@@ -31,7 +31,7 @@ function build(options: { maxFailedLogins?: number } = {}) {
       registry: new ClinicRegistry([clinicA]),
       agent: t.agent,
       dbPath: ":memory:",
-      adminToken: SUPER,
+      accessKey: SUPER,
       settings: { debounceMs: 0, handoffHours: 12, historyMaxTurns: 20, historyDays: 14 },
     }),
   });

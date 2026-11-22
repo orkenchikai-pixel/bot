@@ -177,14 +177,21 @@ describe("эксплуатация", () => {
     db.close();
   }, 15_000);
 
-  it("production не запустится без секретов и с плейсхолдерами", () => {
+  it("production не запустится без секретов; клиника без номера WhatsApp — только предупреждение", () => {
     const config = loadConfig({ ADMIN_TOKEN: "short" });
-    const { errors } = productionProblems(config, [testClinic({ whatsapp: { phone_number_id: "REPLACE_ME" } })], {});
-    expect(errors.join("\n")).toMatch(/ANTHROPIC_API_KEY/);
-    expect(errors.join("\n")).toMatch(/WHATSAPP_APP_SECRET/);
-    expect(errors.join("\n")).toMatch(/ADMIN_TOKEN/);
-    expect(errors.join("\n")).toMatch(/DATA_ENCRYPTION_KEY/);
-    expect(errors.join("\n")).toMatch(/phone_number_id/);
+    const connected = productionProblems(config, [testClinic()], {});
+    expect(connected.errors.join("\n")).toMatch(/ANTHROPIC_API_KEY/);
+    expect(connected.errors.join("\n")).toMatch(/WHATSAPP_APP_SECRET/);
+    expect(connected.errors.join("\n")).toMatch(/WHATSAPP_VERIFY_TOKEN/);
+    expect(connected.errors.join("\n")).toMatch(/ADMIN_TOKEN/);
+    expect(connected.errors.join("\n")).toMatch(/DATA_ENCRYPTION_KEY/);
+    expect(connected.errors.join("\n")).toMatch(/токен WhatsApp/);
+
+    // Установили бота, а номер от Meta ещё не получили: работает симулятор, секреты WhatsApp не нужны.
+    const later = productionProblems(config, [testClinic({ whatsapp: { phone_number_id: "REPLACE_ME" } })], {});
+    expect(later.errors.join("\n")).not.toMatch(/WHATSAPP|токен WhatsApp/);
+    expect(later.warnings.join("\n")).toMatch(/WhatsApp не подключён ни у одной клиники/);
+    expect(later.warnings.join("\n")).toMatch(/phone_number_id/);
 
     const good = loadConfig({
       WHATSAPP_APP_SECRET: "s",

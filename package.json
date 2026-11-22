@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "token": "tsx src/cli/token.ts",
+    "check": "tsx src/cli/check.ts",
     "test:coverage": "vitest run --coverage",
     "redteam": "tsx scripts/redteam.ts",
     "audit": "npm audit --audit-level=high"

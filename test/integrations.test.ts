@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -169,13 +169,18 @@ describe("эксплуатация", () => {
     const restored = openDatabase(first);
     expect((restored.prepare("SELECT COUNT(*) AS n FROM patients").get() as { n: number }).n).toBe(1);
     restored.close();
-    for (let i = 0; i < 3; i++) {
-      await new Promise((r) => setTimeout(r, 1100)); // имена файлов — с точностью до секунды
-      backupDatabase(db, path.join(dir, "backups"), 2);
-    }
-    expect(readdirSync(path.join(dir, "backups")).filter((f) => f.endsWith(".db"))).toHaveLength(2);
+    const backups = path.join(dir, "backups");
+    writeFileSync(path.join(backups, "backup-20250101-000000.db"), ""); // копия с именем прежнего формата
+    // Несколько копий подряд, в одну и ту же секунду (например, ручная прямо перед обновлением), не мешают друг другу.
+    const names = new Set([first]);
+    for (let i = 0; i < 3; i++) names.add(backupDatabase(db, backups, 2));
+    expect(names.size).toBe(4);
+    const left = readdirSync(backups).filter((f) => f.endsWith(".db"));
+    expect(left).toHaveLength(2);
+    expect(left).not.toContain("backup-20250101-000000.db");
+    for (const name of left) expect(name).toMatch(/^backup-\d{8}-\d{6}-\d{3}\.db$/);
     db.close();
-  }, 15_000);
+  });
 
   it("production не запустится без секретов; клиника без номера WhatsApp — только предупреждение", () => {
     const config = loadConfig({ ADMIN_TOKEN: "short" });
